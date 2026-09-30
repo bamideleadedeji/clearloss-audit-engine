@@ -37,20 +37,32 @@ def run_anomaly_detection(df):
     """
     df = df.copy()
     
+    if df.empty:
+        df["risk_score"] = 0
+        df["flagged_reason"] = "Normal"
+        return df
+    
     # Feature Engineering
     df["log_amount"] = np.log1p(df["amount"])
-    vendor_stats = df.groupby("vendor_name")["amount"].transform(["mean", "std"]).fillna(0)
-    df["vendor_zscore"] = (df["amount"] - vendor_stats["mean"]) / (vendor_stats["std"] + 1e-5)
+    
+    # Fixed groupby transforms for single statistics
+    vendor_mean = df.groupby("vendor_name")["amount"].transform("mean").fillna(0)
+    vendor_std = df.groupby("vendor_name")["amount"].transform("std").fillna(0)
+    
+    df["vendor_zscore"] = (df["amount"] - vendor_mean) / (vendor_std + 1e-5)
     
     # Isolation Forest Model
-    model = IsolationForest(contamination=0.05, random_state=42)
+    contamination_rate = min(0.05, max(1.0 / len(df), 0.01)) # Dynamic safe contamination
+    model = IsolationForest(contamination=contamination_rate, random_state=42)
     features = df[["log_amount", "vendor_zscore"]]
     df["anomaly_score"] = model.fit_predict(features) # -1 for anomaly, 1 for normal
     
     # Calculate Risk Score (0 - 100)
-    df["risk_score"] = np.where(df["anomaly_score"] == -1, 
-                                np.clip(df["vendor_zscore"] * 25 + 50, 60, 99), 
-                                np.clip(df["vendor_zscore"] * 10, 5, 40))
+    df["risk_score"] = np.where(
+        df["anomaly_score"] == -1, 
+        np.clip(df["vendor_zscore"] * 25 + 50, 60, 99), 
+        np.clip(df["vendor_zscore"] * 10, 5, 40)
+    )
     
     # Calculate flag status
     df["flagged_reason"] = "Normal"
