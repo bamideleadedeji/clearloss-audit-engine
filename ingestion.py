@@ -43,20 +43,19 @@ def fetch_live_procurement_data(limit=1000):
             return df
         else:
             print(f"API Error: {response.status_code}")
-            return generate_fallback_data()
+            return generate_fallback_data(limit)
     except Exception as e:
         print(f"Connection error: {e}. Loading local fallback cache.")
-        return generate_fallback_data()
+        return generate_fallback_data(limit)
 
-def generate_fallback_data():
-    """Fallback generator matching exact production schema if offline."""
+def generate_fallback_data(n=1000):
+    """Fallback generator matching exact production schema if API fails or offline."""
     np.random.seed(42)
     vendors = ["ACME Defense LLC", "Apex Logistics", "Global Cybertech", "Trident Tech Solutions", "Omni Health Systems"]
     agencies = ["Department of Defense", "Department of Veterans Affairs", "Department of Homeland Security"]
     
-    n = 1000
     amounts = np.random.lognormal(mean=9.5, sigma=1.2, size=n)
-    # Inject synthetic anomalies for Benford's Law testing (e.g., forced split transactions around $9,900)
+    # Inject synthetic anomalies for Benford's Law and Split-Invoice testing
     amounts[::20] = np.random.uniform(9800, 9999, size=len(amounts[::20]))
     
     df = pd.DataFrame({
@@ -65,7 +64,7 @@ def generate_fallback_data():
         "amount": amounts,
         "agency": np.random.choice(agencies, size=n),
         "sub_agency": "Sub-Agency Division",
-        "date": pd.date_range(start="2025-01-01", periods=n, freq="H")
+        "date": pd.date_range(start="2025-01-01", periods=n, freq="h")  # Fixed lowercase 'h'
     })
     return df
 
