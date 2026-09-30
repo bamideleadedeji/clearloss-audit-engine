@@ -132,7 +132,7 @@ with tab1:
         st.plotly_chart(fig_ben, use_container_width=True)
         
         stat_col1, stat_col2 = st.columns(2)
-        stat_col1.caption(f"**Chi-Square Statistic ($\chi^2$):** {benford_res['chi_stat']:.2f}")
+        stat_col1.caption(rf"**Chi-Square Statistic ($\chi^2$):** {benford_res['chi_stat']:.2f}")
         
         p_val = benford_res['p_value']
         status_msg = "⚠️ High Anomaly Variance Detected (p < 0.05)" if p_val < 0.05 else "✅ Natural Distribution Pattern (p >= 0.05)"
