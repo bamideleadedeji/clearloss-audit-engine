@@ -1,4 +1,4 @@
-import numpy as np
+﻿import numpy as np
 import pandas as pd
 from sklearn.ensemble import IsolationForest
 from scipy.stats import chisquare
@@ -20,7 +20,7 @@ def analyze_benfords_law(df: pd.DataFrame) -> dict:
 
     for val in positive_amounts:
         digits_only = f"{val:.6f}".replace(".", "").lstrip("0")
-        if len(digits_only) >= 1 and digits_only[0].isdigit() and digits_only[0] != "0":
+        if len(digits_only) >= 1 and digits_only.isdigit() and digits_only != "0":
             first_digits.append(int(digits_only[0]))
         if len(digits_only) >= 2 and digits_only[:2].isdigit():
             d2 = int(digits_only[:2])
@@ -37,7 +37,6 @@ def analyze_benfords_law(df: pd.DataFrame) -> dict:
 
     chi_stat, p_value = chisquare(counts, f_exp=benford_expected * n)
 
-    # Nigrini Mean Absolute Deviation (MAD) Conformity Standard
     mad = float(np.mean(np.abs(observed_freq.values - benford_expected)))
     if mad <= 0.006:
         mad_status = "Close Conformity (Natural)"
@@ -48,7 +47,6 @@ def analyze_benfords_law(df: pd.DataFrame) -> dict:
     else:
         mad_status = "Nonconformity — High Manipulation Risk"
 
-    # First-Two-Digit (10-99) spike detection (catches 98/99 threshold clustering)
     two_digit_spikes = []
     if len(first_two_digits) >= 30:
         n2 = len(first_two_digits)
@@ -77,12 +75,10 @@ def analyze_benfords_law(df: pd.DataFrame) -> dict:
         "sample_size": n,
         "two_digit_spikes": two_digit_spikes,
     }
-
-
 def run_anomaly_detection(df: pd.DataFrame) -> pd.DataFrame:
     """
     Combines Isolation Forest ML, Vendor Z-Score outliers, Exact Duplicate Invoice checks,
-    and Round-Dollar threshold billing flags into an explainable 0-100 risk score.
+    and AP Round-Dollar threshold flags into a calibrated 0-100 forensic risk score.
     """
     df = df.copy()
     if df.empty:
@@ -100,34 +96,40 @@ def run_anomaly_detection(df: pd.DataFrame) -> pd.DataFrame:
     vendor_std = df.groupby("vendor_key")["amount"].transform("std").fillna(0.0)
     df["vendor_zscore"] = np.where(vendor_std > 0, (df["amount"] - vendor_mean) / vendor_std, 0.0)
 
-    # 1. Isolation Forest Multivariate Outlier Detection
+    # 1. Isolation Forest Multivariate Outlier Detection (top ~5% anomalies)
     if len(df) >= 10:
-        contamination_rate = min(0.08, max(2.0 / len(df), 0.02))
+        contamination_rate = min(0.06, max(2.0 / len(df), 0.03))
         model = IsolationForest(contamination=contamination_rate, random_state=42)
         df["anomaly_score"] = model.fit_predict(df[["log_amount", "vendor_zscore"]])
     else:
         df["anomaly_score"] = 1
 
-    # 2. Exact Duplicate Invoice Detection (Same Vendor + Same Amount within 7 Days)
-    df = df.sort_values(by=["vendor_key", "amount", "date"]).reset_index(drop=True)
-    same_vendor_amt = (df["vendor_key"] == df["vendor_key"].shift(1)) & (np.isclose(df["amount"], df["amount"].shift(1), atol=0.01))
+    # 2. Exact Duplicate Payment Detection (Same Vendor + Same Agency + Same Amount within 7 Days)
+    df = df.sort_values(by=["vendor_key", "agency", "amount", "date"]).reset_index(drop=True)
+    same_entity_amt = (
+        (df["vendor_key"] == df["vendor_key"].shift(1))
+        & (df["agency"] == df["agency"].shift(1))
+        & (np.isclose(df["amount"], df["amount"].shift(1), atol=0.01))
+    )
     days_apart = (df["date"] - df["date"].shift(1)).dt.total_seconds().abs() / 86400.0
-    df["is_duplicate"] = same_vendor_amt & (days_apart <= 7.0)
+    df["is_duplicate"] = same_entity_amt & (days_apart <= 7.0)
 
-    # 3. Suspicious Round-Dollar Billing ($5,000+ exact multiples of $1,000)
-    df["is_round_dollar"] = (df["amount"] >= 5000.0) & (np.isclose(df["amount"] % 1000.0, 0.0, atol=0.01))
+    # 3. AP Round-Dollar Billing ($5,000 to $250,000 exact multiples of $1,000 — excludes SEC million-dollar filings)
+    df["is_round_dollar"] = (
+        (df["amount"] >= 5000.0)
+        & (df["amount"] <= 250000.0)
+        & (np.isclose(df["amount"] % 1000.0, 0.0, atol=0.01))
+    )
 
-    # Base Risk Score from ML & Z-Score
     base_score = np.where(
         df["anomaly_score"] == -1,
-        np.clip(np.abs(df["vendor_zscore"]) * 20.0 + 62.0, 62.0, 96.0),
-        np.clip(np.abs(df["vendor_zscore"]) * 12.0, 5.0, 48.0),
+        np.clip(np.abs(df["vendor_zscore"]) * 18.0 + 64.0, 64.0, 96.0),
+        np.clip(np.abs(df["vendor_zscore"]) * 10.0, 5.0, 45.0),
     )
     df["risk_score"] = base_score
-    df.loc[df["is_round_dollar"], "risk_score"] = np.maximum(df["risk_score"], 68.0)
+    df.loc[df["is_round_dollar"], "risk_score"] = np.clip(df["risk_score"] + 22.0, 0.0, 95.0)
     df.loc[df["is_duplicate"], "risk_score"] = np.maximum(df["risk_score"], 90.0)
 
-    # Explainable Audit Flag Reasons
     reasons = []
     for _, r in df.iterrows():
         tags = []
